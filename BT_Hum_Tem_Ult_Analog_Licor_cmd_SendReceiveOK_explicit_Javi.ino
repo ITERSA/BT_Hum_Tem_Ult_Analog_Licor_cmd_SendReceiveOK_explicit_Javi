@@ -1,22 +1,34 @@
 
+/*
+ * Experimental prototype for measuring stations
+ * =============================================
+ * 
+ * COMPANY: ITER
+ * AUTHOR: Aarón Pérez Martín
+ * EMAIL: aaperez@iter.es
+ * YEAR : 2016
+ * VERSION : 1.0
+ */
+ 
 //Libs
-//#include <SoftwareSerial.h>
 #include <DHT.h>
 
+//Connections Notes:
+//==================
+//BluePins must be inverted
+//UltPin must be inverted
+
 //pins
-#define LEDPIN 13
-#define LED2PIN 12
-/*#define BLUPIN_TX 1 //inverted connections.
-#define BLUPIN_RX 0*/
+#define LEDPIN 13   // activity led
+#define LED2PIN 12  // command led
 #define ULTPIN_TX 8 //inverted connections
 #define ULTPIN_RX 7
 #define HUMPIN 9
 
 //types
-#define TRAMA "[Temperatura,Humedad,Distancia,Tiempo,SalidasAnalogicas,Licor]"
+#define TRAMA "[Temperatura,Humedad,Distancia,SalidasAnalogicas,Licor]"
 #define DHTTYPE DHT11 //HUMPIN
 DHT dht(HUMPIN,DHTTYPE);
-//SoftwareSerial BT1(BLUPIN_TX,BLUPIN_RX); // RX, TX recorder que se cruzan
 
 //for sensor operations
 float humData;
@@ -27,7 +39,7 @@ String analogData;
 String licorData;
 
 //for analog pins
-int const maxPin = 16;
+int const maxPin = 4;
 float sensorValue[maxPin];
 float voltageValue[maxPin];
 int defaultValue = 0;
@@ -35,22 +47,33 @@ int defaultValue = 0;
 //for dataToSend
 String TRAMADATA;
 
+int maxTags = 6;
+
+//For XML parser
+char *startTags[] = { "<celltemp>", "<cellpres>", "<co2>", "<co2abs>", "<ivolt>", "<raw>"  };
+char *nameTags[] = { "celltemp", "cellpres", "co2", "co2abs", "ivolt", "raw"  };
+char *endTags[] = { "</celltemp>", "</cellpres>", "</co2>", "</co2abs>", "</ivolt>", "</raw>"  };
+
 void setup()
    {
     Serial.begin(9600);//Monitor
-    while(!Serial){;}
-    Serial.flush();
-    Serial.println("Arduino ready.");
-
-    Serial1.begin(9600);//Licor sensor
-    while(!Serial1){;}
-    Serial1.flush();
-    Serial.println("Serie 1: Licor sensor ready.");
-      
     Serial2.begin(9600);//Bluetooth
+    Serial3.begin(9600);//Licor sensor
+    Serial.println("");
+    
+    while(!Serial){;}
+    //Serial.flush();
+    Serial.println("Arduino is loading...");
+    
     while(!Serial2){;}
-    Serial2.flush();
-     Serial.println("Serie 2: Bluetooth device ready.");
+    //Serial2.flush();
+    Serial.println("Serie 2: Bluetooth device ready.");
+
+    while(!Serial3){;}
+    //Serial3.flush();
+    Serial.println("Serie 3: Licor sensor ready.");
+
+    Serial.println("Arduino ready.");
 
     Serial.println("");
     Serial.println("Formato trama");
@@ -67,12 +90,10 @@ void setup()
     pinMode(LED2PIN,OUTPUT);
 
     digitalWrite(LED2PIN, LOW);
-    
    }
 
 void loop(){
-
-    Serial.flush();
+    delay(200);
 
     //Activamos las mediciones
     digitalWrite(LEDPIN,HIGH);
@@ -87,16 +108,14 @@ void loop(){
     sendDataBT();
 
     digitalWrite(LEDPIN, LOW);
-    //Receive data from BT??
+    //Receive data from BT
     receiveDataBT();
-    
 }
 
 //Methods
 void readHum(){
   humData = dht.readHumidity();
   temData = dht.readTemperature();
-  //delay(200);
 }
 
 void readUlt(){
@@ -111,10 +130,10 @@ void readUlt(){
   pinMode(ULTPIN_RX, INPUT);
   timeUltData = pulseIn(ULTPIN_RX, HIGH);
   distUltData = microsecondsToCentimeters(timeUltData);
-  //delay(200);
 }
+
 void readAnalog(){
-  String s = "";//"Analog Values [";
+  String s = "[";
   for(int i = 0;i<maxPin; i++){
     
     sensorValue[i] = analogRead(i);
@@ -127,50 +146,65 @@ void readAnalog(){
       s = s + "A" + String(i) + ":" + voltageValue[i];
       
     if(i<maxPin -1)
-      s=s+"," ; 
+      s += ","; 
   }
-  //s=s+"]";
+  s += "]";
   analogData = s;
 }
 
 void readLicor(){
-  licorData = "<co2>394.76</co2><tem>51.2</tem><pre>101383</pre><h2o>394.76</h2o><bat>12.4</bat>";
-  
-  /*if(Serial1.available() > 0){
-      //Se captura sin tratamiento para el aplique de formulas en el software posterior
-      licorData = Serial1.readStringUntil('\n');
-  }*/
-  
+  //Original data
+  //<li820><data><celltemp>5.1704649e1</celltemp><cellpres>1.0152190e2</cellpres><co2>4.0337109e2</co2><co2abs>6.4475774e-2</co2abs><ivolt>1.4199829e1</ivolt><raw>3787568,3639155</raw></data></li820>
+
+    licorData = Serial3.readStringUntil('\n');
+    readTags();
 }
+
 /*
-String getLineLicor(){
-  licorData = "";
-  String S = "" ;
-  char message[1000];
-  if (Serial1.available()){
-    char c = Serial1.read(); ;
-        while ( c != '\n')            //Hasta que el caracter sea intro
-          {     S = S + c ;
-                strcat(message,c);
-                //delay(25) ;
-                c = Serial1.read();
-          }
-        licorData = licorData + S;
-        return(licorData);
+ * Read de XML data from de licor sensor and we get the values using given tags
+ */
+void readTags()
+{
+  delay(200);
+  String originalData = licorData;
+  int count = -1;
+  for (int i=0; i<maxTags; i++ )
+  {
+     int startTag = originalData.indexOf(startTags[i]);
+     int endTag = originalData.indexOf(endTags[i]);
+  
+     int lengthTag = strlen(startTags[i]);
+     String item = originalData.substring(startTag + lengthTag, endTag);
+     String tag = nameTags[i];
+     
+     if(item.length() > 0){
+        count++;
+        if(count == 0)
+          licorData = "[";
+        else{
+          if(i < maxTags -1)
+            licorData += tag + ":" + item + ",";
+          else
+            licorData += tag + ":" + item;
+
+          if(i == maxTags -1 )
+            licorData += "]";
+        }
+     }
   }
-}*/
+}
 
 void receiveDataBT(){
   while(Serial2.available()>0){
     char inByte = Serial2.read();
     switch (inByte) {
+      case '0':
+        digitalWrite(LED2PIN, LOW);
+        Serial.println("Turn off LED");
+        break;
       case '1':
         digitalWrite(LED2PIN, HIGH);
         Serial.println("Turn on LED");
-        break;
-      case '2':
-        digitalWrite(LED2PIN, LOW);
-        Serial.println("Turn off LED");
         break;
     }
    }
@@ -180,34 +214,32 @@ void sendDataBT(){
   generateDataToSend();
   
   //To Bluetooth serial port
-  //if(Serial2.available()){
-    Serial2.println(TRAMADATA);
-  //}
+  Serial2.println(TRAMADATA);
   
   //To Monitor serial port
   Serial.println(TRAMADATA);
 }
 
 void generateDataToSend(){
-/*
-  if(strcmp(String(temData),"") &&
-    strcmp(String(humData),"") &&
-    strcmp(String(distUltData),"") &&
-    strcmp(String(timeUltData),"") &&
-    strcmp(analogData,"") &&
-    strcmp(licorData,""))
-    return false;
-  */
-  TRAMADATA = "[";
-  TRAMADATA += "TAM:" + String(temData) + ",";
-  TRAMADATA += "HAM:" + String(humData) + ",";
-  TRAMADATA += "DIS:" + String(distUltData) + ",";
-  // TRAMADATA += String(timeUltData) + "},{";
-  TRAMADATA += analogData + ",";
-  TRAMADATA += "LIC:" + licorData;
-  TRAMADATA += "]";
 
-  //return TRAMADATA;
+  String temp = String(temData);
+  String humi = String(humData);
+  String dist = String(distUltData);
+  String licor = String(licorData);
+  
+  if((temp.length()>0) &&
+    (humi.length()>0) &&
+    (dist.length()>0) &&
+    (licor.length()>0)){
+      
+    TRAMADATA = "[";
+    TRAMADATA += "TAM:" + temp + ",";
+    TRAMADATA += "HAM:" + humi + ",";
+    TRAMADATA += "DIS:" + dist + ",";
+    TRAMADATA += "ANA:" + analogData + ",";
+    TRAMADATA += "LIC:" + licor;
+    TRAMADATA += "]";
+  }
 }
 
 void clearValues(){
@@ -218,6 +250,8 @@ void clearValues(){
   temData=0;
   timeUltData=0;
   distUltData=0;
+
+  licorData = "";
 }
 
 void clearAnalogValues(){

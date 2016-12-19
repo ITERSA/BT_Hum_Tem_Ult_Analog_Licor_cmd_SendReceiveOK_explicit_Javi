@@ -6,7 +6,7 @@
 //pins
 #define LEDPIN 13
 #define LED2PIN 12
-/*#define BLUPIN_TX 1 //inverted connections
+/*#define BLUPIN_TX 1 //inverted connections.
 #define BLUPIN_RX 0*/
 #define ULTPIN_TX 8 //inverted connections
 #define ULTPIN_RX 7
